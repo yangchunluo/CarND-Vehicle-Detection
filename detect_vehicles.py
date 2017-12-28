@@ -6,6 +6,7 @@ import glob
 import random
 import copy
 import numpy as np
+from scipy.ndimage.measurements import label
 from moviepy.editor import VideoFileClip
 
 from train_classifier import extract_features, FeatureExtractParams
@@ -457,29 +458,30 @@ def draw_windows(img, window_list):
     """Draw the boxes on image"""
     imcopy = np.copy(img)
     colors = [(0, 0, 255), (255, 0, 0), (0, 255, 0)]
-    # Iterate through the bounding boxes
-    for window in window_list:
-        # Draw a rectangle given bbox coordinates
-        cv2.rectangle(imcopy, window[0], window[1], random.choice(colors), 3)
-    # Return the image copy with boxes drawn
+    for box, confidence in window_list:
+        # Draw a rectangle given window coordinates
+        cv2.rectangle(imcopy, box[0], box[1], random.choice(colors), 3)
+        # Put down the confidence score
+        cv2.putText(imcopy, "{:.2f}".format(confidence), org=(box[0][0], box[0][1] - 3),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, thickness=2, color=(255, 255, 255))
     return imcopy
 
 
-def get_sliding_windows(x_start_stop, y_start_stop, window_size, window_overlap):
+def get_sliding_windows(x_start_stop, y_start_stop, window_size, increment):
     """
     Return a list of sliding window positions for searching, with the caller decided search range and window size.
     :param x_start_stop: a tuple of (start, stop) positions for X
     :param y_start_stop: a tuple of (start, stop) positions for Y
     :param window_size: a tuple of (X, Y) window size
-    :param window_overlap: a tuple of (X, Y) window overlap fraction
+    :param increment: a tuple of (X, Y) window overlap fraction
     :return: a list of search windows
     """
     window_list = []
-    for y in range(y_start_stop[0], y_start_stop[1], int(window_size[1] * (1 - window_overlap[1]))):
-        for x in range(x_start_stop[0], x_start_stop[1], int(window_size[0] * (1 - window_overlap[0]))):
+    for y in range(y_start_stop[0], y_start_stop[1], increment[1]):
+        for x in range(x_start_stop[0], x_start_stop[1], increment[0]):
             end_x = int(x + window_size[0])
             end_y = int(y + window_size[1])
-            if (end_x - x_start_stop[1]) / window_size[0] > 0.8 or (end_y - y_start_stop[1]) / window_size[1] > 0.8:
+            if (end_x - x_start_stop[1]) > 0.2 * window_size[0] or (end_y - y_start_stop[1]) > 0.2 * window_size[1]:
                 continue
             window_list.append(((x, y), (end_x, end_y)))
     return window_list
@@ -500,7 +502,7 @@ def search_sliding_window(img, search_option, clf, scaler, params):
     for window in get_sliding_windows(x_start_stop=(0, img_size[0]),
                                       y_start_stop=(search_option[2], search_option[3]),
                                       window_size=(search_option[0], search_option[0]),
-                                      window_overlap=(search_option[1], search_option[1])):
+                                      increment=(search_option[1], search_option[1])):
         # Extract the window from original image and resize it to 64x64 (same sized of training images)
         roi = img[window[0][1]:window[1][1], window[0][0]:window[1][0]]
         roi = cv2.resize(roi, (64, 64))
@@ -510,7 +512,9 @@ def search_sliding_window(img, search_option, clf, scaler, params):
         features_scaled = scaler.transform(np.array(features).reshape(1, -1))
         # Predict.
         if clf.predict(features_scaled) == 1:
-            positive_windows.append(window)
+            confidence = clf.decision_function(features_scaled)[0]
+            if confidence > 1.0:
+                positive_windows.append((window, confidence))
     return positive_windows
 
 
@@ -524,19 +528,43 @@ def process_pipeline(img, svc, feature_scaler, feature_params, output_dir, img_b
     """
     img_size = get_img_size(img)
 
-    search_options = [(40, 0.5, 400, 470),
-                      (80, 0.5, 410, 550),
-                      (120, 0.65, 410, 600),
-                      (170, 0.75, 410, 650),
-                      (220, 0.8, 410, 700)]
+    search_options = [(40, 20, 400, 470),
+                      (80, 30, 400, 550),
+                      (120, 40, 400, 600),
+                      (170, 40, 400, 650),
+                      (220, 40, 400, 700)]
 
-    hot_windows = []
+    positive_windows = []
     for opt in search_options:
-        hot = search_sliding_window(img, opt, svc, feature_scaler, feature_params)
-        print(len(hot))
-        hot_windows.extend(hot)
-    window_drawn = draw_windows(img, hot_windows)
-    return window_drawn
+        positive_windows.extend(search_sliding_window(img, opt, svc, feature_scaler, feature_params))
+    if img_base_fname is not None:
+        output_img(draw_windows(img, positive_windows),
+                   os.path.join(output_dir, "searchbox", img_base_fname))
+
+    heatmap = np.zeros(img.shape[:2]).astype(np.float)
+    for box, confidence in positive_windows:
+        heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence * 10
+    heatmap[heatmap <= 20] = 0
+    if img_base_fname is not None:
+        output_img(heatmap, os.path.join(output_dir, "heatmap", img_base_fname))
+
+    labels = label(heatmap)
+    result = np.copy(img)
+    for car_number in range(1, labels[1] + 1):
+        # Find pixels with each car_number label value
+        nonzero = (labels[0] == car_number).nonzero()
+        # Identify x and y values of those pixels
+        nonzeroy = np.array(nonzero[0])
+        nonzerox = np.array(nonzero[1])
+        # Define a bounding box based on min/max x and y
+        bbox = ((np.min(nonzerox), np.min(nonzeroy)), (np.max(nonzerox), np.max(nonzeroy)))
+        # Draw the box on the image
+        cv2.rectangle(result, bbox[0], bbox[1], (0, 0, 255), 6)
+
+    insert_image(result, cv2.resize(np.clip(heatmap, 0, 255),
+                                    (heatmap.shape[1] // 4, heatmap.shape[0] // 4)), 80, 50)
+
+    return result
 
 
 if __name__ == "__main__":
@@ -545,9 +573,9 @@ if __name__ == "__main__":
                         help='File path for the trained model and its parameters')
     parser.add_argument('--calibration-file', type=str, required=False, default='./calibration-params.p',
                         help='File path for camera calibration parameters')
-    parser.add_argument('--image-dir', type=str, required=False, default='./test_images',
+    parser.add_argument('--image-dir', type=str, required=False, #default='./test_images',
                         help='Directory of images to process')
-    parser.add_argument('--video-file', type=str, required=False, #default='./test_video.mp4',
+    parser.add_argument('--video-file', type=str, required=False, default='./test_video.mp4',
                         help="Video file to process")
     x = parser.parse_args()
 
@@ -576,8 +604,7 @@ if __name__ == "__main__":
     if x.video_file:
         gen = fname_generator(max_num_frame=10)
         clip = VideoFileClip(x.video_file) #.subclip(0,2)
-        lane_hist = LaneHistoryInfo()
         write_clip = clip.fl_image(lambda frame:  # RGB
-            process_pipeline_prev(frame, lane_hist, mtx, dist,
+            process_pipeline(frame, svc, scaler, feature_params,
                              'output_images_' + os.path.basename(x.video_file), next(gen)))
         write_clip.write_videofile('result_' + os.path.basename(x.video_file), audio=False)

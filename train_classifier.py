@@ -186,8 +186,8 @@ if __name__ == "__main__":
                         help='Output pickle file for the trained model and its parameters')
     x = parser.parse_args()
 
-    feature_params = FeatureExtractParams(color_space="YCrCb", spatial_size=32, hist_bins=32,
-                                          hog_orient=9, hog_pix_per_cell=8, hog_cell_per_block=2,
+    feature_params = FeatureExtractParams(color_space="HLS", spatial_size=32, hist_bins=32,
+                                          hog_orient=9, hog_pix_per_cell=16, hog_cell_per_block=2,
                                           hog_channels=[0, 1, 2])
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
