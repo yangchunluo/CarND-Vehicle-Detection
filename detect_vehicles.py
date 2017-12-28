@@ -460,7 +460,7 @@ def draw_windows(img, window_list):
     # Iterate through the bounding boxes
     for window in window_list:
         # Draw a rectangle given bbox coordinates
-        cv2.rectangle(imcopy, window[0], window[1], random.choice(colors), 1)
+        cv2.rectangle(imcopy, window[0], window[1], random.choice(colors), 3)
     # Return the image copy with boxes drawn
     return imcopy
 
@@ -479,7 +479,7 @@ def get_sliding_windows(x_start_stop, y_start_stop, window_size, window_overlap)
         for x in range(x_start_stop[0], x_start_stop[1], int(window_size[0] * (1 - window_overlap[0]))):
             end_x = int(x + window_size[0])
             end_y = int(y + window_size[1])
-            if end_x > x_start_stop[1] * 1.2 or end_y > y_start_stop[1] * 1.2:
+            if (end_x - x_start_stop[1]) / window_size[0] > 0.8 or (end_y - y_start_stop[1]) / window_size[1] > 0.8:
                 continue
             window_list.append(((x, y), (end_x, end_y)))
     return window_list
@@ -524,13 +524,12 @@ def process_pipeline(img, svc, feature_scaler, feature_params, output_dir, img_b
     """
     img_size = get_img_size(img)
 
-    search_options = [(20, 0.5, 400, 440),
-                      (50, 0.5, 410, 470),
+    search_options = [(40, 0.5, 400, 470),
                       (80, 0.5, 410, 550),
-                      (120, 0.5, 410, 600),
-                      (180, 0.5, 410, 650),
-                      (220, 0.5, 410, 700)]
-    #print(search_options)
+                      (120, 0.65, 410, 600),
+                      (170, 0.75, 410, 650),
+                      (220, 0.8, 410, 700)]
+
     hot_windows = []
     for opt in search_options:
         hot = search_sliding_window(img, opt, svc, feature_scaler, feature_params)

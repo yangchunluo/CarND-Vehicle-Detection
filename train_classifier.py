@@ -51,27 +51,38 @@ def get_all_features(file_list, params):
 
 
 def get_hog_features(img, params):
-    """Get HOG features"""
+    """
+    Get HOG features.
+    :param img: image in converted space
+    :param params: feature extraction parameters
+    """
     if params.hog_orient is None:
         return np.array([])
     channel_hogs = [hog(img[:, :, ch], orientations=params.hog_orient,
                         pixels_per_cell=(params.hog_pix_per_cell, params.hog_pix_per_cell),
                         cells_per_block=(params.hog_cell_per_block, params.hog_cell_per_block),
-                        transform_sqrt=True,
-                        visualise=False, feature_vector=True)
+                        transform_sqrt=True, visualise=False, feature_vector=True, block_norm='L2-Hys')
                     for ch in params.hog_channels]
     return np.concatenate(channel_hogs)
 
 
 def get_binned_spatial_features(img, params):
-    """Get binned spatial features"""
+    """
+    Get binned spatial features.
+    :param img: image in converted space
+    :param params: feature extraction parameters
+    """
     if params.spatial_size is None:
         return np.array([])
     return cv2.resize(img, (params.spatial_size, params.spatial_size)).ravel()
 
 
 def get_color_histogram_features(img, params):
-    """Get color histogram features"""
+    """
+    Get color histogram features.
+    :param img: image in converted space
+    :param params: feature extraction parameters
+    """
     if params.hist_bins is None:
         return np.array([])
     # Compute the histogram of the color channels separately.
@@ -81,32 +92,32 @@ def get_color_histogram_features(img, params):
     return np.concatenate([hist[0] for hist in channel_hist])
 
 
-def extract_features(image, params):
+def extract_features(img, params):
     """
     Extract features from an image
-    :param image: cv2 read-in image, assuming BGR format with pixel values [0-255]
+    :param img: image in RGB space
     :param params: feature extraction parameters
     :return: all the features concatenated as vector
     """
     # Color space conversion.
     if params.color_space == 'RGB':
-        feature_image = np.copy(image)
+        img_cvt = np.copy(img)
     elif params.color_space == 'HSV':
-        feature_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     elif params.color_space == 'LUV':
-        feature_image = cv2.cvtColor(image, cv2.COLOR_RGB2LUV)
+        img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2LUV)
     elif params.color_space == 'HLS':
-        feature_image = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
+        img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
     elif params.color_space == 'YUV':
-        feature_image = cv2.cvtColor(image, cv2.COLOR_RGB2YUV)
+        img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
     elif params.color_space == 'YCrCb':
-        feature_image = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
+        img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
     else:
         raise ValueError("Invalid color space {}".format(params.color_space))
 
-    spatial_features = get_binned_spatial_features(feature_image, params)
-    histogram_features = get_color_histogram_features(feature_image, params)
-    hog_features = get_hog_features(feature_image, params)
+    spatial_features = get_binned_spatial_features(img_cvt, params)
+    histogram_features = get_color_histogram_features(img_cvt, params)
+    hog_features = get_hog_features(img_cvt, params)
     # print(len(spatial_features))
     # print(len(histogram_features))
     # print(len(hog_features))
@@ -151,7 +162,7 @@ def train_classifier(input_paths, split_portion, params):
         len(y_test), len(y_test[y_test == 1]), len(y_test[y_test == 0])))
 
     # Train the SVM classifier.
-    svc = LinearSVC()
+    svc = LinearSVC(C=10)
     t0 = time.time()
     svc.fit(X_train, y_train)
     t1 = time.time()
@@ -176,7 +187,7 @@ if __name__ == "__main__":
     x = parser.parse_args()
 
     feature_params = FeatureExtractParams(color_space="LUV", spatial_size=16, hist_bins=32,
-                                          hog_orient=8, hog_pix_per_cell=8, hog_cell_per_block=2, hog_channels=[0])
+                                          hog_orient=9, hog_pix_per_cell=8, hog_cell_per_block=2, hog_channels=[0])
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
     # Save the model and its parameters
@@ -185,6 +196,4 @@ if __name__ == "__main__":
     dist_pickle["feature_scaler"] = scaler
     dist_pickle["feature_params"] = feature_params
     pickle.dump(dist_pickle, open(x.output_file, "wb"))
-
-
 
