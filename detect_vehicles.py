@@ -487,7 +487,7 @@ def get_sliding_windows(x_start_stop, y_start_stop, window_size, window_overlap)
 
 def search_sliding_window(img, search_option, clf, scaler, params):
     """
-    Search the image with a given windows size.
+    Search the image with the given window properties.
     :param img: input image
     :param search_option: a tuple of (window size, window overlap, y_start, y_stop)
     :param clf: pre-trained classifier
@@ -530,7 +530,7 @@ def process_pipeline(img, svc, feature_scaler, feature_params, output_dir, img_b
                       (120, 0.5, 410, 600),
                       (180, 0.5, 410, 650),
                       (220, 0.5, 410, 700)]
-    print(search_options)
+    #print(search_options)
     hot_windows = []
     for opt in search_options:
         hot = search_sliding_window(img, opt, svc, feature_scaler, feature_params)
@@ -562,10 +562,11 @@ if __name__ == "__main__":
     svc = dist_pickle["classifier"]
     scaler = dist_pickle["feature_scaler"]
     feature_params = dist_pickle["feature_params"]
+    print(feature_params)
 
     if x.image_dir:
-        #images = glob.glob(os.path.join(x.image_dir, "*.jpg"))
-        images = ['./test_images/test1.jpg']
+        images = glob.glob(os.path.join(x.image_dir, "*.jpg"))
+        #images = ['./test_images/test1.jpg']
         for fname in sorted(images):
             print(fname)
             img = cv2.imread(fname)  # BGR

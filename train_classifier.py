@@ -32,7 +32,6 @@ def get_all_files(root_dir, file_ext=None):
         if file_ext is not None:
             file_names = filter(lambda f: os.path.basename(f).endswith(file_ext), file_names)
         file_list.extend([os.path.join(dir_name, f) for f in file_names])
-    print(len(file_list))
     return file_list
 
 
@@ -46,7 +45,6 @@ def get_all_features(file_list, params):
     feature_list = []
     for filename in file_list:
         img = cv2.imread(filename)
-        # if os.path.basename(filename).endswith(".png"):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         feature_list.append(extract_features(img, params))
     return feature_list
@@ -54,6 +52,8 @@ def get_all_features(file_list, params):
 
 def get_hog_features(img, params):
     """Get HOG features"""
+    if params.hog_orient is None:
+        return np.array([])
     channel_hogs = [hog(img[:, :, ch], orientations=params.hog_orient,
                         pixels_per_cell=(params.hog_pix_per_cell, params.hog_pix_per_cell),
                         cells_per_block=(params.hog_cell_per_block, params.hog_cell_per_block),
@@ -65,11 +65,15 @@ def get_hog_features(img, params):
 
 def get_binned_spatial_features(img, params):
     """Get binned spatial features"""
+    if params.spatial_size is None:
+        return np.array([])
     return cv2.resize(img, (params.spatial_size, params.spatial_size)).ravel()
 
 
 def get_color_histogram_features(img, params):
     """Get color histogram features"""
+    if params.hist_bins is None:
+        return np.array([])
     # Compute the histogram of the color channels separately.
     channel_hist = [np.histogram(img[:, :, ch], bins=params.hist_bins, range=(0, 256))
                     for ch in range(3)]
@@ -122,15 +126,16 @@ def train_classifier(input_paths, split_portion, params):
     features = []
     for path, name in zip(input_paths, ["positive", "negative"]):
         t0 = time.time()
-        features.append(get_all_features(get_all_files(path, ".png")[:1000], params))
+        features.append(get_all_features(get_all_files(path, ".png"), params))
         print('{:.2f} seconds to get {} features'.format(time.time() - t0, name))
-
-    # Feature normalization.
+    print("Feature dimension {}".format(len(features[0][0])))
     print("Positive sample size {}".format(len(features[0])))
     print("Negative sample size {}".format(len(features[1])))
+
+    # Feature normalization.
     X = np.vstack(features).astype(np.float64)
-    X_scaler = StandardScaler().fit(X)
-    X_scaled = X_scaler.transform(X)
+    scaler = StandardScaler().fit(X)
+    X_scaled = scaler.transform(X)
 
     # Get the labels.
     y = np.hstack((np.ones(len(features[0])),
@@ -140,8 +145,10 @@ def train_classifier(input_paths, split_portion, params):
     rand_state = 37
     X_train, X_test, y_train, y_test = train_test_split(
         X_scaled, y, test_size=split_portion, random_state=rand_state)
-    print("Training sample size {}".format(len(y_train)))
-    print("Test sample size {}".format(len(y_test)))
+    print("Training sample size {}: positive {} negative {}".format(
+        len(y_train), len(y_train[y_train == 1]), len(y_train[y_train == 0])))
+    print("Testing sample size {}: positive {} negative {}".format(
+        len(y_test), len(y_test[y_test == 1]), len(y_test[y_test == 0])))
 
     # Train the SVM classifier.
     svc = LinearSVC()
@@ -153,7 +160,7 @@ def train_classifier(input_paths, split_portion, params):
     # Test the SVM accuracy
     print('Test Accuracy of SVC = ', svc.score(X_test, y_test))
 
-    return svc, X_scaler
+    return svc, scaler
 
 
 if __name__ == "__main__":
@@ -168,8 +175,8 @@ if __name__ == "__main__":
                         help='Output pickle file for the trained model and its parameters')
     x = parser.parse_args()
 
-    feature_params = FeatureExtractParams(color_space="RGB", spatial_size=32, hist_bins=32,
-                                          hog_orient=8, hog_pix_per_cell=8, hog_cell_per_block=2, hog_channels=[0, 1])
+    feature_params = FeatureExtractParams(color_space="LUV", spatial_size=16, hist_bins=32,
+                                          hog_orient=8, hog_pix_per_cell=8, hog_cell_per_block=2, hog_channels=[0])
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
     # Save the model and its parameters
