@@ -32,6 +32,7 @@ def get_all_files(root_dir, file_ext=None):
         if file_ext is not None:
             file_names = filter(lambda f: os.path.basename(f).endswith(file_ext), file_names)
         file_list.extend([os.path.join(dir_name, f) for f in file_names])
+    print(len(file_list))
     return file_list
 
 
@@ -138,7 +139,7 @@ def train_classifier(input_paths, split_portion, params):
     # Split up data into randomized training and test sets.
     rand_state = 37
     X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, random_state=rand_state)
+        X_scaled, y, test_size=split_portion, random_state=rand_state)
     print("Training sample size {}".format(len(y_train)))
     print("Test sample size {}".format(len(y_test)))
 
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument('--negative-dir', type=str, required=False, default='./training_images/non-vehicles',
                         help='Directory of negative sample images (not having a vehicle)')
     parser.add_argument('--split-portion', type=float, required=False, default=0.2,
-                        help='Train-test split portion')
+                        help='Train-test split (portion for test)')
     parser.add_argument('--output-file', type=str, required=False, default='./trained-model-params.p',
                         help='Output pickle file for the trained model and its parameters')
     x = parser.parse_args()
@@ -172,10 +173,10 @@ if __name__ == "__main__":
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
     # Save the model and its parameters
-    dist_pickle = {}
-    dist_pickle["svc"] = svc
-    dist_pickle["scaler"] = scaler
-    dist_pickle["params"] = feature_params
+    dist_pickle = dict()
+    dist_pickle["classifier"] = svc
+    dist_pickle["feature_scaler"] = scaler
+    dist_pickle["feature_params"] = feature_params
     pickle.dump(dist_pickle, open(x.output_file, "wb"))
 
 
