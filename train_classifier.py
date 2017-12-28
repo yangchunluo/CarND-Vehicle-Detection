@@ -11,6 +11,9 @@ from sklearn.svm import LinearSVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
+# Training image is 64 by 64 in size.
+TRAIN_SAMPLE_SIZE = 64
+
 
 class FeatureExtractParams(namedtuple('FeatureExtractParams',
                                       ['color_space', 'spatial_size', 'hist_bins',
@@ -45,6 +48,7 @@ def get_all_features(file_list, params):
     feature_list = []
     for filename in file_list:
         img = cv2.imread(filename)  # BGR
+        assert img.shape[:2] == (TRAIN_SAMPLE_SIZE, TRAIN_SAMPLE_SIZE)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
         feature_list.append(extract_features(img, params))
     return feature_list
@@ -52,18 +56,27 @@ def get_all_features(file_list, params):
 
 def get_hog_features(img, params):
     """
-    Get HOG features.
+    Get HOG features for all color channels and concatenate them in a flat vector.
+    :param img: image in converted space
+    :param params: feature extraction parameters
+    """
+    channel_hogs = [get_hog_features_for_channel(img, ch, params).ravel()
+                    for ch in params.hog_channels]
+    return np.concatenate(channel_hogs)
+
+
+def get_hog_features_for_channel(img, channel, params):
+    """
+    Get HOG features for a color channel without raveling.
     :param img: image in converted space
     :param params: feature extraction parameters
     """
     if params.hog_orient is None:
         return np.array([])
-    channel_hogs = [hog(img[:, :, ch], orientations=params.hog_orient,
-                        pixels_per_cell=(params.hog_pix_per_cell, params.hog_pix_per_cell),
-                        cells_per_block=(params.hog_cell_per_block, params.hog_cell_per_block),
-                        transform_sqrt=True, visualise=False, feature_vector=True, block_norm='L1')
-                    for ch in params.hog_channels]
-    return np.concatenate(channel_hogs)
+    return hog(img[:, :, channel], orientations=params.hog_orient,
+               pixels_per_cell=(params.hog_pix_per_cell, params.hog_pix_per_cell),
+               cells_per_block=(params.hog_cell_per_block, params.hog_cell_per_block),
+               transform_sqrt=True, feature_vector=False)
 
 
 def get_binned_spatial_features(img, params):
@@ -92,14 +105,13 @@ def get_color_histogram_features(img, params):
     return np.concatenate([hist[0] for hist in channel_hist])
 
 
-def extract_features(img, params):
+def convert_color_space(img, params):
     """
-    Extract features from an image
-    :param img: image in RGB space
+    Convert color space.
+    :param img: image in RGB
     :param params: feature extraction parameters
-    :return: all the features concatenated as vector
+    :return: image converted
     """
-    # Color space conversion.
     if params.color_space == 'RGB':
         img_cvt = np.copy(img)
     elif params.color_space == 'HSV':
@@ -114,15 +126,27 @@ def extract_features(img, params):
         img_cvt = cv2.cvtColor(img, cv2.COLOR_RGB2YCrCb)
     else:
         raise ValueError("Invalid color space {}".format(params.color_space))
+    return img_cvt
 
-    spatial_features = get_binned_spatial_features(img_cvt, params)
-    histogram_features = get_color_histogram_features(img_cvt, params)
-    hog_features = get_hog_features(img_cvt, params)
-    # print(len(spatial_features))
-    # print(len(histogram_features))
-    # print(len(hog_features))
 
+def combine_features(spatial_features, histogram_features, hog_features):
+    """
+    Combine the feature vectors. The order matters!
+    """
     return np.concatenate((spatial_features, histogram_features, hog_features))
+
+
+def extract_features(img, params):
+    """
+    Extract features from an image
+    :param img: image in RGB space
+    :param params: feature extraction parameters
+    :return: all the features concatenated as vector
+    """
+    img_cvt = convert_color_space(img, params)
+    return combine_features(spatial_features=get_binned_spatial_features(img_cvt, params),
+                            histogram_features=get_color_histogram_features(img_cvt, params),
+                            hog_features=get_hog_features(img_cvt, params))
 
 
 def train_classifier(input_paths, split_portion, params):
@@ -186,9 +210,10 @@ if __name__ == "__main__":
                         help='Output pickle file for the trained model and its parameters')
     x = parser.parse_args()
 
-    feature_params = FeatureExtractParams(color_space="HLS", spatial_size=32, hist_bins=32,
-                                          hog_orient=9, hog_pix_per_cell=16, hog_cell_per_block=2,
+    feature_params = FeatureExtractParams(color_space="YCrCb", spatial_size=32, hist_bins=32,
+                                          hog_orient=9, hog_pix_per_cell=8, hog_cell_per_block=2,
                                           hog_channels=[0, 1, 2])
+    print(feature_params)
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
     # Save the model and its parameters
