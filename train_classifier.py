@@ -44,8 +44,8 @@ def get_all_features(file_list, params):
     """
     feature_list = []
     for filename in file_list:
-        img = cv2.imread(filename)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.imread(filename)  # BGR
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
         feature_list.append(extract_features(img, params))
     return feature_list
 
@@ -61,7 +61,7 @@ def get_hog_features(img, params):
     channel_hogs = [hog(img[:, :, ch], orientations=params.hog_orient,
                         pixels_per_cell=(params.hog_pix_per_cell, params.hog_pix_per_cell),
                         cells_per_block=(params.hog_cell_per_block, params.hog_cell_per_block),
-                        transform_sqrt=True, visualise=False, feature_vector=True, block_norm='L2-Hys')
+                        transform_sqrt=True, visualise=False, feature_vector=True, block_norm='L1')
                     for ch in params.hog_channels]
     return np.concatenate(channel_hogs)
 
@@ -162,7 +162,7 @@ def train_classifier(input_paths, split_portion, params):
         len(y_test), len(y_test[y_test == 1]), len(y_test[y_test == 0])))
 
     # Train the SVM classifier.
-    svc = LinearSVC(C=10)
+    svc = LinearSVC()
     t0 = time.time()
     svc.fit(X_train, y_train)
     t1 = time.time()
@@ -186,8 +186,9 @@ if __name__ == "__main__":
                         help='Output pickle file for the trained model and its parameters')
     x = parser.parse_args()
 
-    feature_params = FeatureExtractParams(color_space="LUV", spatial_size=16, hist_bins=32,
-                                          hog_orient=9, hog_pix_per_cell=8, hog_cell_per_block=2, hog_channels=[0])
+    feature_params = FeatureExtractParams(color_space="YCrCb", spatial_size=32, hist_bins=32,
+                                          hog_orient=9, hog_pix_per_cell=8, hog_cell_per_block=2,
+                                          hog_channels=[0, 1, 2])
     svc, scaler = train_classifier((x.positive_dir, x.negative_dir), x.split_portion, feature_params)
 
     # Save the model and its parameters
