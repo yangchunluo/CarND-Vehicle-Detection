@@ -110,7 +110,7 @@ class LaneHistoryInfo:
         self.distance_to_center = None
 
         # Constant parameters
-        self.decay_rate = 0.8
+        self.decay_rate = 0.2
         self.continuous_failure_threshold = 5
 
 
@@ -317,7 +317,7 @@ def detect_lane(warped, lane_hist, num_windows, margin_detect, margin_track, rec
             lane_hist.use_tracking = True
             lane_hist.use_xbase = True
             # Exponential decay and update coefficients and xbase positions
-            rate = lane_hist.decay_rate ** (lane_hist.n_continuous_failure + 1)
+            rate = (1 - lane_hist.decay_rate) ** (lane_hist.n_continuous_failure + 1)
             for which in ['left', 'right']:
                 lane_hist.xbase_position[which] *= rate
                 lane_hist.xbase_position[which] += lane_xpos[which] * (1 - rate)

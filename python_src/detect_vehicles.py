@@ -11,10 +11,10 @@ from train_classifier import (TRAIN_SAMPLE_SIZE, combine_features, get_hog_featu
 from utils import output_img, get_img_size
 
 
-# Heatmap thresholds for window and individual pixel.
-HEATMAP_THRESHOLD_WINDOW = 0.99  # Confidence score
+# Heatmap thresholds for window (current frame) and individual pixel (aggregated over past).
+HEATMAP_THRESHOLD_WINDOW = 1.3  # Current confidence score
 HEATMAP_THRESHOLD_WINDOW_PORTION = 0.5  # Percentage
-HEATMAP_THRESHOLD_PIXEL = 0.2  # Confidence score
+HEATMAP_THRESHOLD_PIXEL = 0.5  # Aggregated confidence score
 
 
 class VehicleDetectionParams(namedtuple("VehicleDetectionParams",
@@ -25,6 +25,16 @@ class VehicleDetectionParams(namedtuple("VehicleDetectionParams",
 class SearchOptions(namedtuple("SearchOptions",
                                ["window_scale", "y_start", "y_stop", "min_confidence", "cell_per_step"])):
     """Search window options"""
+
+
+class VehicleHistoryInfo:
+    """History information for vehicle detection"""
+    def __init__(self):
+        # Exponential decay of heatmap
+        self.heatmap = None
+
+        # Constant parameters
+        self.decay_rate = 0.2
 
 
 def draw_windows(img, window_list):
@@ -140,11 +150,12 @@ def search_scaled_window(precomputed, search_opt, clf, scaler, params):
     return positive_windows
 
 
-def vehicle_detection_pipeline(img, vehicle_detection_params, output_dir, img_base_fname):
+def vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist, output_dir, img_base_fname):
     """
     Image processing pipeline.
     :param img: image pixels array, in RGB color space
     :param vehicle_detection_params: needed parameters
+    :param vehicle_hist: vehicle detection history
     :param output_dir: intermediate output directory
     :param img_base_fname: base filename for this image, None for disabling intermediate output
     :return: see below
@@ -169,23 +180,38 @@ def vehicle_detection_pipeline(img, vehicle_detection_params, output_dir, img_ba
     if img_base_fname is not None:
         output_img(searchbox_display, os.path.join(output_dir, "searchbox", img_base_fname))
 
-    # Use heat map to weed out false positives and remove duplicate detections.
-    # Build the heat map using confidence score for each search window.
+    # Build the current heat map using confidence score for each search window.
     heatmap = np.zeros(img.shape[:2]).astype(np.float)
     for box, confidence in positive_windows:
         heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
-    # For each search window, check if it contains any accumulatively high-confidence pixel (above threshold).
-    # If not, remove this window. Otherwise, keep it as is.
+    # For each search window, count the portion of high-confidence pixels.
+    # If below a threshold, remove this low-quality window.
     heatmap_copy = np.copy(heatmap)
     for box, confidence in positive_windows:
         roi = heatmap_copy[box[0][1]:box[1][1], box[0][0]:box[1][0]]
         above_count = np.count_nonzero(roi >= HEATMAP_THRESHOLD_WINDOW)
         if above_count / float(roi.shape[0] * roi.shape[1]) < HEATMAP_THRESHOLD_WINDOW_PORTION:
             heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] -= confidence
+
+    # Update vehicle history *before* thresholding individual pixels.
+    if vehicle_hist is not None:
+        # First frame.
+        if vehicle_hist.heatmap is None:
+            vehicle_hist.heatmap = np.copy(heatmap)  # IMPORTANT: must deep copy
+        # Exponential decay update.
+        vehicle_hist.heatmap *= (1 - vehicle_hist.decay_rate)
+        vehicle_hist.heatmap += heatmap * vehicle_hist.decay_rate
+        del heatmap
+        # For the rest of the function. Must deep copy.
+        heatmap = np.copy(vehicle_hist.heatmap)
+
     # Filter individual pixels based on a smaller threshold.
     heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0
+
     # Increase the heatmap magnitude for visualization.
-    heatmap_display = np.clip(heatmap * 20, 0, 255)
+    heatmap_display = np.dstack((np.clip(heatmap * 100, 0, 255),  # R
+                                 np.zeros_like(heatmap),          # G
+                                 np.zeros_like(heatmap)))         # B
     if img_base_fname is not None:
         output_img(heatmap_display, os.path.join(output_dir, "heatmap", img_base_fname))
 

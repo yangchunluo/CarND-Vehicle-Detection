@@ -9,7 +9,7 @@ from moviepy.editor import VideoFileClip
 
 from utils import insert_image, output_img
 from train_classifier import FeatureExtractParams
-from detect_vehicles import VehicleDetectionParams, vehicle_detection_pipeline
+from detect_vehicles import VehicleHistoryInfo, VehicleDetectionParams, vehicle_detection_pipeline
 from find_lane_lines import LaneHistoryInfo, lane_finding_pipeline
 
 
@@ -24,7 +24,8 @@ def fname_generator(max_num_frame=None):
             yield 'video-frame-{}.jpg'.format(idx)
 
 
-def process_pipeline(img, mtx, dist, vehicle_detection_params, lane_hist, output_dir, img_base_fname):
+def process_pipeline(img, mtx, dist, vehicle_detection_params, vehicle_hist, lane_hist,
+                     output_dir, img_base_fname):
     """
     Image processing pipeline entry point.
     :param img: image pixels array, in RGB color space
@@ -42,7 +43,7 @@ def process_pipeline(img, mtx, dist, vehicle_detection_params, lane_hist, output
     thread_result = {}
 
     def call_vehicle_detection(t_result):
-        t_result["vehicles"] = vehicle_detection_pipeline(img, vehicle_detection_params,
+        t_result["vehicles"] = vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist,
                                                           output_dir, img_base_fname)
     threads.append(threading.Thread(target=call_vehicle_detection, args=(thread_result,)))
 
@@ -63,8 +64,8 @@ def process_pipeline(img, mtx, dist, vehicle_detection_params, lane_hist, output
     for box in vehicles:
         cv2.rectangle(result, box[0], box[1], color=(0, 0, 255), thickness=6)
     # Overlay diagnosis windows for vehicle detection.
-    insert_image(result, searchbox, x=20, y=30, shrinkage=3)
-    insert_image(result, heatmap, x=500, y=30, shrinkage=3.5)
+    insert_image(result, searchbox, x=10, y=30, shrinkage=2.6)
+    insert_image(result, heatmap, x=520, y=30, shrinkage=3.5)
     # Overlay diagnosis windows for lane finding.
     insert_image(result, diag_window, x=900, y=30, shrinkage=3.5)
     # Highlight the lane region and pixels.
@@ -88,7 +89,7 @@ if __name__ == "__main__":
                         help='File path for camera calibration parameters')
     parser.add_argument('--image-dir', type=str, required=False, #default='../test_images',
                         help='Directory of images to process')
-    parser.add_argument('--video-file', type=str, required=False, #default='../test_video.mp4',
+    parser.add_argument('--video-file', type=str, required=False, default='../test_video.mp4',
                         help="Video file to process")
     args = parser.parse_args()
 
@@ -105,20 +106,21 @@ if __name__ == "__main__":
     print(vehicle_params.feature_params)
 
     if args.image_dir:
-        #images = glob.glob(os.path.join(args.image_dir, "*.jpg"))
-        images = ['../test_images/test1.jpg']
+        images = glob.glob(os.path.join(args.image_dir, "*.jpg"))
+        # images = ['../test_images/test1.jpg']
         for fname in sorted(images):
             print(fname)
             img = cv2.imread(fname)  # BGR
             out = process_pipeline(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), mtx, dist, vehicle_params,
-                                   None, '../output_images', os.path.basename(fname))
+                                   None, None, '../output_images', os.path.basename(fname))
             output_img(out, os.path.join('../output_images', os.path.basename(fname)))
 
     if args.video_file:
-        gen = fname_generator(max_num_frame=10)
+        gen = fname_generator(max_num_frame=40)
         clip = VideoFileClip(args.video_file) #.subclip(0,2)
         lane_hist = LaneHistoryInfo()
+        vehicle_hist = VehicleHistoryInfo()
         write_clip = clip.fl_image(lambda frame:  # RGB
-            process_pipeline(frame, mtx, dist, vehicle_params, lane_hist,
+            process_pipeline(frame, mtx, dist, vehicle_params, vehicle_hist, lane_hist,
                              '../output_images_' + os.path.basename(args.video_file), next(gen)))
         write_clip.write_videofile('../result_' + os.path.basename(args.video_file), audio=False)
