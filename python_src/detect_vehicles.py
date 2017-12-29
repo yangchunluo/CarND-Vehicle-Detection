@@ -12,8 +12,9 @@ from utils import output_img, get_img_size
 
 
 # Heatmap thresholds for window and individual pixel.
-HEATMAP_THRESHOLD_WINDOW = 1.5
-HEATMAP_THRESHOLD_PIXEL = 0.2
+HEATMAP_THRESHOLD_WINDOW = 0.99  # Confidence score
+HEATMAP_THRESHOLD_WINDOW_PORTION = 0.5  # Percentage
+HEATMAP_THRESHOLD_PIXEL = 0.2  # Confidence score
 
 
 class VehicleDetectionParams(namedtuple("VehicleDetectionParams",
@@ -175,9 +176,12 @@ def vehicle_detection_pipeline(img, vehicle_detection_params, output_dir, img_ba
         heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
     # For each search window, check if it contains any accumulatively high-confidence pixel (above threshold).
     # If not, remove this window. Otherwise, keep it as is.
-    for box, _ in positive_windows:
-        if not np.any(heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] >= HEATMAP_THRESHOLD_WINDOW):
-            heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] = 0
+    heatmap_copy = np.copy(heatmap)
+    for box, confidence in positive_windows:
+        roi = heatmap_copy[box[0][1]:box[1][1], box[0][0]:box[1][0]]
+        above_count = np.count_nonzero(roi >= HEATMAP_THRESHOLD_WINDOW)
+        if above_count / float(roi.shape[0] * roi.shape[1]) < HEATMAP_THRESHOLD_WINDOW_PORTION:
+            heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] -= confidence
     # Filter individual pixels based on a smaller threshold.
     heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0
     # Increase the heatmap magnitude for visualization.

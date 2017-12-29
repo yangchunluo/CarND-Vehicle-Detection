@@ -4,6 +4,7 @@ import glob
 import pickle
 import argparse
 import numpy as np
+import threading
 from moviepy.editor import VideoFileClip
 
 from utils import insert_image, output_img
@@ -36,34 +37,43 @@ def process_pipeline(img, mtx, dist, vehicle_detection_params, lane_hist, output
     if img_base_fname is not None:
         output_img(img, os.path.join(output_dir, 'undistort', img_base_fname))
 
-    # TODO: Parallelize these two pipelines
-    vehicles, searchbox, heatmap = vehicle_detection_pipeline(img, vehicle_detection_params,
-                                                              output_dir, img_base_fname)
+    # Parallelize the two pipelines
+    threads = []
+    thread_result = {}
 
-    diag_window, lane_region, lane_pixels, radius, distance = lane_finding_pipeline(img, lane_hist,
-                                                                                    output_dir, img_base_fname)
+    def call_vehicle_detection(t_result):
+        t_result["vehicles"] = vehicle_detection_pipeline(img, vehicle_detection_params,
+                                                          output_dir, img_base_fname)
+    threads.append(threading.Thread(target=call_vehicle_detection, args=(thread_result,)))
+
+    def call_land_finding(t_result):
+        t_result["lanes"] = lane_finding_pipeline(img, lane_hist, output_dir, img_base_fname)
+    threads.append(threading.Thread(target=call_land_finding, args=(thread_result,)))
+
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    vehicles, searchbox, heatmap = thread_result["vehicles"]
+    diag_window, lane_region, lane_pixels, radius, distance = thread_result["lanes"]
 
     result = np.copy(img)
-
     # Draw vehicle boxes
     for box in vehicles:
         cv2.rectangle(result, box[0], box[1], color=(0, 0, 255), thickness=6)
-
-    # Overlay diagnosis windows for vechicle detection.
+    # Overlay diagnosis windows for vehicle detection.
     insert_image(result, searchbox, x=20, y=30, shrinkage=3)
     insert_image(result, heatmap, x=500, y=30, shrinkage=3.5)
-
     # Overlay diagnosis windows for lane finding.
     insert_image(result, diag_window, x=900, y=30, shrinkage=3.5)
-
     # Highlight the lane region and pixels.
     result = cv2.addWeighted(result, 1, lane_region, 0.3, 0)
     result = cv2.addWeighted(result, .8, lane_pixels, 1, 0)
-
-    # Add text for curvature and distance to lane center
-    cv2.putText(result, "Radius: {:.1f}(m)".format(radius), org=(80, 630),
+    # Add text for curvature and distance to lane center.
+    cv2.putText(result, "Radius of Curvature: {:.1f}(m)".format(radius), org=(80, 630),
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=3, color=(255, 255, 255))
-    cv2.putText(result, "Center: {:.3f}(m) {}".format(
+    cv2.putText(result, "Distance to Center : {:.3f}(m) {}".format(
         abs(distance), 'left' if distance < 0 else 'right'), org=(80, 680),
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=3, color=(255, 255, 255))
 
@@ -76,7 +86,7 @@ if __name__ == "__main__":
                         help='File path for the trained model and its parameters')
     parser.add_argument('--calibration-file', type=str, required=False, default='../calibration-params.p',
                         help='File path for camera calibration parameters')
-    parser.add_argument('--image-dir', type=str, required=False, default='../test_images',
+    parser.add_argument('--image-dir', type=str, required=False, #default='../test_images',
                         help='Directory of images to process')
     parser.add_argument('--video-file', type=str, required=False, #default='../test_video.mp4',
                         help="Video file to process")
@@ -95,8 +105,8 @@ if __name__ == "__main__":
     print(vehicle_params.feature_params)
 
     if args.image_dir:
-        images = glob.glob(os.path.join(args.image_dir, "*.jpg"))
-        # images = ['./test_images/test1.jpg']
+        #images = glob.glob(os.path.join(args.image_dir, "*.jpg"))
+        images = ['../test_images/test1.jpg']
         for fname in sorted(images):
             print(fname)
             img = cv2.imread(fname)  # BGR
