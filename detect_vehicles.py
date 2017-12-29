@@ -3,7 +3,6 @@ import cv2
 import os
 import pickle
 import glob
-import random
 import copy
 import numpy as np
 
@@ -473,29 +472,60 @@ class SearchOptions(namedtuple("SearchOptions",
 def draw_windows(img, window_list):
     """Draw the boxes on image"""
     imcopy = np.copy(img)
+    # Use different color for different window size
+    color_size_boundary = [80, 100]
     colors = [(0, 0, 255), (255, 0, 0), (0, 255, 0)]
+    assert len(colors) == len(color_size_boundary) + 1
     for box, confidence in window_list:
+        # Determine which color to use given the window size
+        size = abs(box[0][0] - box[1][0])
+        color_idx = 0
+        for b in color_size_boundary:
+            if size < b:
+                break
+            color_idx += 1
         # Draw a rectangle given window coordinates
-        cv2.rectangle(imcopy, box[0], box[1], random.choice(colors), 3)
+        cv2.rectangle(imcopy, box[0], box[1], colors[color_idx], 3)
         # Put down the confidence score
-        cv2.putText(imcopy, "{:.2f}".format(confidence), org=(box[0][0], box[0][1] - 3),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, thickness=2, color=(255, 255, 255))
+        cv2.putText(imcopy, "{:.2f}".format(confidence), org=(box[0][0], box[1][1] + 13),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.7, thickness=2, color=(255, 255, 255))
     return imcopy
 
 
-def search_scaled_window(img, search_opt, clf, scaler, params):
+def precompute_for_all_searches(img, search_opts, params):
     """
-    Search the image using sub-sampling for HOG features.
+    Pre-compute HOG features once this image frame
     :param img: input image
+    :param search_opts: all the search options (for min/max Y boundary)
+    :param params: feature extraction parameters
+    :return: image converted (color space), hog features
+    """
+    # Get the min and max of Y boundary.
+    y_min = np.min([opt.y_start for opt in search_opts])
+    y_max = np.max([opt.y_stop for opt in search_opts])
+    # Slice the image.
+    img_slice = img[y_min:y_max, :, :]
+    # Convert color space.
+    img_slice = convert_color_space(img_slice, params)
+    return img_slice, y_min
+
+
+def search_scaled_window(precomputed, search_opt, clf, scaler, params):
+    """
+    Search given the search window, using sub-sampling for HOG features.
+    :param precomputed: precomputed stuff (see precompute_hog_on_slice)
     :param search_opt: search window options
     :param clf: pre-trained classifier
     :param scaler: feature scaler
     :param params: feature extraction parameters
     :return: list of windows in which vehicle is detected
     """
-    img_slice = img[search_opt.y_start:search_opt.y_stop, :, :]
-    img_slice = convert_color_space(img_slice, params)
+    # Extract image slice for this search region.
+    img_slice, y_min = precomputed
+    img_slice = img_slice[search_opt.y_start - y_min:search_opt.y_stop - y_min, :, :]
     slice_size = get_img_size(img_slice)
+
+    # Scale the sliced region
     if search_opt.window_scale != 1:
         img_slice = cv2.resize(img_slice, (int(slice_size[0] / search_opt.window_scale),
                                            int(slice_size[1] / search_opt.window_scale)))
@@ -511,9 +541,10 @@ def search_scaled_window(img, search_opt, clf, scaler, params):
     nsteps_x = (nblocks_x - nblocks_window) // search_opt.cell_per_step + 1
     nsteps_y = (nblocks_y - nblocks_window) // search_opt.cell_per_step + 1
 
-    # Compute individual channel HOG features for the entire image slice
-    hog_channels = [get_hog_features_for_channel(img_slice, ch, params)
-                    for ch in params.hog_channels]
+    # Compute individual channel HOG features.
+    # Don't seem to be able to pre-compute this (possibly due to different window size at different scale).
+    hog_slice = [get_hog_features_for_channel(img_slice, ch, params)
+                 for ch in params.hog_channels]
 
     positive_windows = []
     for xb in range(nsteps_x):
@@ -523,7 +554,7 @@ def search_scaled_window(img, search_opt, clf, scaler, params):
 
             # Extract HOG features
             hog_subsampled = [hc[ypos:ypos + nblocks_window, xpos:xpos + nblocks_window].ravel()
-                              for hc in hog_channels]
+                              for hc in hog_slice]
 
             # Extract original image patch and get other features
             xleft = xpos * params.hog_pix_per_cell
@@ -561,26 +592,38 @@ def process_pipeline(img, svc, feature_scaler, feature_params, output_dir, img_b
     """
 
     # Search through a list of options.
-    search_opt = [SearchOptions(window_scale=0.5, y_start=400, y_stop=500, min_confidence=0.1, cell_per_step=2),
-                  SearchOptions(window_scale=1.0, y_start=400, y_stop=600, min_confidence=0.1, cell_per_step=2),
-                  SearchOptions(window_scale=1.5, y_start=400, y_stop=656, min_confidence=0.1, cell_per_step=2),
-                  SearchOptions(window_scale=2.0, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2),
-                  SearchOptions(window_scale=3.5, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2)]
+    search_opt = [
+        # SearchOptions(window_scale=0.5, y_start=400, y_stop=500, min_confidence=0.1, cell_per_step=2),
+        SearchOptions(window_scale=1.0, y_start=400, y_stop=600, min_confidence=0.1, cell_per_step=2),
+        SearchOptions(window_scale=1.5, y_start=400, y_stop=656, min_confidence=0.1, cell_per_step=2),
+        SearchOptions(window_scale=2.0, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2),
+        # SearchOptions(window_scale=3.5, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2),
+    ]
+    # Precompute once, instead of in each search
+    precomputed = precompute_for_all_searches(img, search_opt, feature_params)
 
     positive_windows = list(chain.from_iterable(  # Essentially a flatmap operation
-        map(lambda opt: search_scaled_window(img, opt, svc, feature_scaler, feature_params), search_opt)))
-    # print(positive_windows)
+        map(lambda opt: search_scaled_window(precomputed, opt, svc, feature_scaler, feature_params),
+            search_opt)))
     searchbox = draw_windows(img, positive_windows)
     if img_base_fname is not None:
         output_img(searchbox, os.path.join(output_dir, "searchbox", img_base_fname))
 
     # Use heat map to weed out false positives and remove duplicate detections.
-    heat_threshold = 2
+    # Build the heat map using confidence score for each search window.
     heatmap = np.zeros(img.shape[:2]).astype(np.float)
     for box, confidence in positive_windows:
         heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
-    # Apply threshold
-    heatmap[heatmap <= heat_threshold] = 0
+    # For each search window, check if it contains any accumulatively high-confidence pixel (above threshold).
+    # If not, remove this window. Otherwise, keep it as is.
+    heat_threshold_accumulative = 1.5
+    for box, _ in positive_windows:
+        if not np.any(heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] >= heat_threshold_accumulative):
+            heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] = 0
+    # Filter individual pixels based on a smaller threshold.
+    heat_threshold_individual = 0.2
+    heatmap[heatmap < heat_threshold_individual] = 0
+    # Increase the heatmap magnitude for visualization.
     heatmap_display = np.clip(heatmap * 20, 0, 255)
     if img_base_fname is not None:
         output_img(heatmap_display, os.path.join(output_dir, "heatmap", img_base_fname))
@@ -614,7 +657,7 @@ if __name__ == "__main__":
                         help='File path for camera calibration parameters')
     parser.add_argument('--image-dir', type=str, required=False, #default='./test_images',
                         help='Directory of images to process')
-    parser.add_argument('--video-file', type=str, required=False, default='./project_video.mp4',
+    parser.add_argument('--video-file', type=str, required=False, default='./test_video.mp4',
                         help="Video file to process")
     args = parser.parse_args()
 
