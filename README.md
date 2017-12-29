@@ -251,7 +251,7 @@ The corresponding code is in line 186 through 242 in `detect_vehicles.py`.
 
 The classifier can be further improved with better features and feature parameters. It can also benefit from a large training set. In this project, I used SVM as a black box. I could experiment with other types of classifiers as well, e.g. logistic regression, gradient boosting trees, and etc. In a more radical remake, I could try convolution neural networks (CNN) and completely forgo the feature engineering step, which I found is quite an act of art. I would use mini-batch and drop-out layers to improve generalization for CNNs. 
 
-I have found that aggregating over past frame greatly improved stability and removed all false positive detection. This can be demo using a circular queue based approach to average over past N frames. I chose exponential decay given its implementation simplicity and theoretical justification.
+I have found that aggregating over past frame greatly improved stability and removed all false positive detection. This can be done using a circular queue based approach to average over past N frames. I chose exponential decay given its implementation simplicity and theoretical justification.
 
 To improve overall pipeline performance, I noticed that once the image frame is undistorted, finding lanes and detecting vehicles are completely independent. I overlapped their execution with two threads--this completely hides the execution time of land-finding pipeline.
 
