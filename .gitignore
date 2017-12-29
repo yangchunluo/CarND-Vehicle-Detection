@@ -2,3 +2,4 @@
 .DS_Store
 *.zip
 __pycache__
+training_images

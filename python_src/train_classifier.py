@@ -222,4 +222,3 @@ if __name__ == "__main__":
     dist_pickle["feature_scaler"] = scaler
     dist_pickle["feature_params"] = feature_params
     pickle.dump(dist_pickle, open(x.output_file, "wb"))
-

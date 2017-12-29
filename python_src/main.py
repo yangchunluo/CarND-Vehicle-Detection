@@ -87,7 +87,7 @@ if __name__ == "__main__":
                         help='File path for the trained model and its parameters')
     parser.add_argument('--calibration-file', type=str, required=False, default='../calibration-params.p',
                         help='File path for camera calibration parameters')
-    parser.add_argument('--image-dir', type=str, required=False, #default='../test_images',
+    parser.add_argument('--image-dir', type=str, required=False, # default='../test_images',
                         help='Directory of images to process')
     parser.add_argument('--video-file', type=str, required=False, default='../test_video.mp4',
                         help="Video file to process")
@@ -117,7 +117,7 @@ if __name__ == "__main__":
 
     if args.video_file:
         gen = fname_generator(max_num_frame=40)
-        clip = VideoFileClip(args.video_file) #.subclip(0,2)
+        clip = VideoFileClip(args.video_file)  # .subclip(49, 51)
         lane_hist = LaneHistoryInfo()
         vehicle_hist = VehicleHistoryInfo()
         write_clip = clip.fl_image(lambda frame:  # RGB

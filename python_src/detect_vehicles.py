@@ -14,7 +14,7 @@ from utils import output_img, get_img_size
 # Heatmap thresholds for window (current frame) and individual pixel (aggregated over past).
 HEATMAP_THRESHOLD_WINDOW = 1.3  # Current confidence score
 HEATMAP_THRESHOLD_WINDOW_PORTION = 0.5  # Percentage
-HEATMAP_THRESHOLD_PIXEL = 0.5  # Aggregated confidence score
+HEATMAP_THRESHOLD_PIXEL = 1  # Aggregated confidence score
 
 
 class VehicleDetectionParams(namedtuple("VehicleDetectionParams",
@@ -205,15 +205,19 @@ def vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist, outp
         # For the rest of the function. Must deep copy.
         heatmap = np.copy(vehicle_hist.heatmap)
 
-    # Filter individual pixels based on a smaller threshold.
-    heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0
-
     # Increase the heatmap magnitude for visualization.
-    heatmap_display = np.dstack((np.clip(heatmap * 100, 0, 255),  # R
-                                 np.zeros_like(heatmap),          # G
-                                 np.zeros_like(heatmap)))         # B
+    boost = 170
+    heatmap_display = np.dstack((np.clip(heatmap * boost, 0, 255),  # R
+                                 np.zeros_like(heatmap),            # G
+                                 np.zeros_like(heatmap)))           # B
+    cv2.putText(heatmap_display, "Threshold intensity:", org=(70, 110),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, thickness=3, color=(255, 255, 255))
+    heatmap_display[40:140, 700:800, 0] = HEATMAP_THRESHOLD_PIXEL * boost
     if img_base_fname is not None:
         output_img(heatmap_display, os.path.join(output_dir, "heatmap", img_base_fname))
+
+    # Filter individual pixels.
+    heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0
 
     # Label individual vehicles
     labels = label(heatmap)
