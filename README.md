@@ -16,16 +16,6 @@ The goals / steps of this project are the following:
 * Run your pipeline on a video stream (start with the test_video.mp4 and later implement on full project_video.mp4) and create a heat map of recurring detections frame by frame to reject outliers and follow detected vehicles.
 * Estimate a bounding box for vehicles detected.
 
-[//]: # (Image References)
-[image1]: ./examples/car_not_car.png
-[image2]: ./examples/HOG_example.jpg
-[image3]: ./examples/sliding_windows.jpg
-[image4]: ./examples/sliding_window.jpg
-[image5]: ./examples/bboxes_and_heat.png
-[image6]: ./examples/labels_map.png
-[image7]: ./examples/output_bboxes.png
-[video1]: ./project_video.mp4
-
 ## [Rubric Points](https://review.udacity.com/#!/rubrics/513/view)
 Here I will consider the rubric points individually and describe how I addressed each point in my implementation.  
 
@@ -98,7 +88,7 @@ To support sub-sampling HOG features in the detection code, I provided two inter
 
 #### 2. Explain how you settled on your final choice of HOG parameters.
 
-I have experimented with the following cominbations of HOG feature parameters:
+I have experimented with the following combinations of HOG feature parameters:
 
 - Color space: RGB, HUV, HLS, YUV, YCrCb
 - Number of orientations: 8, 9, 11
@@ -122,8 +112,11 @@ FeatureExtractParams(color_space='YCrCb',
 
 #### 3. Describe how (and identify where in your code) you trained a classifier using your selected HOG features (and color features if you used them).
 
-After all the features are extracted from an image, they are horizontally stacked into a flattend 1D array. I applied feature scaling to normalize them across the entire sample set. The normalized features and correpsonding labels are fed into a linear SVM for training and validation. This corresponds to line 152 through 198 in `train_classifer.py`, with some excerpts below:
+After all the features are extracted from an image, they are horizontally stacked into a flattened 1D array. I applied feature scaling to normalize them across the entire sample set. The normalized features and corresponding labels are fed into a linear SVM for training and validation. The test accuracy is 0.9904.
 
+This corresponds to line 152 through 198 in `train_classifer.py`, with some excerpts below:
+
+```python
     print("Feature dimension {}".format(len(features[0][0])))
     print("Positive sample size {}".format(len(features[0])))
     print("Negative sample size {}".format(len(features[1])))
@@ -155,6 +148,7 @@ After all the features are extracted from an image, they are horizontally stacke
 
     # Test the SVM accuracy
     print('Test Accuracy of SVC = ', svc.score(X_test, y_test))
+```
 
 
 ### Sliding Window Search
@@ -178,6 +172,7 @@ Here are a few sample output. I used different colors for different window scale
 <img src="output_images/searchbox/test1.jpg" width=500/>
 <img src="output_images/searchbox/test3.jpg" width=500/>
 <img src="output_images/searchbox/test5.jpg" width=500/>
+
 ---
 
 ### Video Implementation
@@ -194,19 +189,21 @@ In the sliding window search, I used the SVM confidence score to reject low-qual
 
 I used the confidence score of each window to build the initial heatmap. Then I pruned the low quality windows if the portion of their high-confidence pixels (pixel confidence score > 1.3) is below a threshold (50%).
 
-    # Build the current heat map using confidence score for each search window.
-    heatmap = np.zeros(img.shape[:2]).astype(np.float)
-    for box, confidence in positive_windows:
-        heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
+```python
+# Build the current heat map using confidence score for each search window.
+heatmap = np.zeros(img.shape[:2]).astype(np.float)
+for box, confidence in positive_windows:
+    heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
         
-    # For each search window, count the portion of high-confidence pixels.
-    # If below a threshold, remove this low-quality window.
-    heatmap_copy = np.copy(heatmap)
-    for box, confidence in positive_windows:
-        roi = heatmap_copy[box[0][1]:box[1][1], box[0][0]:box[1][0]]
-        above_count = np.count_nonzero(roi >= HEATMAP_THRESHOLD_WINDOW)
-        if above_count / float(roi.shape[0] * roi.shape[1]) < HEATMAP_THRESHOLD_WINDOW_PORTION:
-            heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] -= confidence
+# For each search window, count the portion of high-confidence pixels.
+# If below a threshold, remove this low-quality window.
+heatmap_copy = np.copy(heatmap)
+for box, confidence in positive_windows:
+    roi = heatmap_copy[box[0][1]:box[1][1], box[0][0]:box[1][0]]
+    above_count = np.count_nonzero(roi >= HEATMAP_THRESHOLD_WINDOW)
+    if above_count / float(roi.shape[0] * roi.shape[1]) < HEATMAP_THRESHOLD_WINDOW_PORTION:
+        heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] -= confidence
+```
 
 I then aggregated heatmaps over past frames using exponential decay (decay_rate=0.2), which has the following advantage:
 
@@ -227,9 +224,11 @@ if vehicle_hist is not None:
     heatmap = np.copy(vehicle_hist.heatmap)
 ```
 
-After the aggregation over past frames, I applied a threshold to each indvidual pixels to remove low-confidence ones.
+After the aggregation over past frames, I applied a threshold to each individual pixels to remove low-confidence ones.
 
-    heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0 
+```python
+heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0 
+```
 
 I then used `scipy.ndimage.measurements.label()` to identify individual blobs in the heatmap. I then assumed each blob corresponded to a vehicle.  I constructed bounding boxes to cover the area of each blob detected.
 
@@ -252,29 +251,30 @@ The corresponding code is in line 186 through 242 in `detect_vehicles.py`.
 
 The classifier can be further improved with better features and feature parameters. It can also benefit from a large training set. In this project, I used SVM as a black box. I could experiment with other types of classifiers as well, e.g. logistic regression, gradient boosting trees, and etc. In a more radical remake, I could try convolution neural networks (CNN) and completely forgo the feature engineering step, which I found is quite an act of art. I would use mini-batch and drop-out layers to improve generalization for CNNs. 
 
-I have found that aggregating over past frame greatly improved stability and removed all false positivie detection. This can be demo using a circlar queue based approach to average over past N frames. I chose exponential decay given its implementation simplicity and theoretical justication.
+I have found that aggregating over past frame greatly improved stability and removed all false positive detection. This can be demo using a circular queue based approach to average over past N frames. I chose exponential decay given its implementation simplicity and theoretical justification.
 
-To improve overall pipeline performance, I noticed that once the image frame is undistorted, finding lanes and detecting vehicles are completely independent. I overlapped their execution with two threads--this completely hiddens the execution time of land-finding pipeline.
+To improve overall pipeline performance, I noticed that once the image frame is undistorted, finding lanes and detecting vehicles are completely independent. I overlapped their execution with two threads--this completely hides the execution time of land-finding pipeline.
 
+```python
+# Parallelize the two pipelines
+threads = []
+thread_result = {}
 
-    # Parallelize the two pipelines
-    threads = []
-    thread_result = {}
+def call_vehicle_detection(t_result):
+    t_result["vehicles"] = vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist, 
+                                                      output_dir, img_base_fname)
+threads.append(threading.Thread(target=call_vehicle_detection, args=(thread_result,)))
 
-    def call_vehicle_detection(t_result):
-        t_result["vehicles"] = vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist,
-                                                          output_dir, img_base_fname)
-    threads.append(threading.Thread(target=call_vehicle_detection, args=(thread_result,)))
+def call_land_finding(t_result):
+    t_result["lanes"] = lane_finding_pipeline(img, lane_hist, output_dir, img_base_fname)
+threads.append(threading.Thread(target=call_land_finding, args=(thread_result,)))
 
-    def call_land_finding(t_result):
-        t_result["lanes"] = lane_finding_pipeline(img, lane_hist, output_dir, img_base_fname)
-    threads.append(threading.Thread(target=call_land_finding, args=(thread_result,)))
-
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
     
-    vehicles, searchbox, heatmap = thread_result["vehicles"]
-    diag_window, lane_region, lane_pixels, radius, distance = thread_result["lanes"]
+vehicles, searchbox, heatmap = thread_result["vehicles"]
+diag_window, lane_region, lane_pixels, radius, distance = thread_result["lanes"]
+```
 
