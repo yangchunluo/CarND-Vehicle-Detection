@@ -1,55 +1,9 @@
-import argparse
-import cv2
 import os
-import pickle
-import glob
+import cv2
 import copy
 import numpy as np
 
-from itertools import chain
-from collections import namedtuple
-from scipy.ndimage.measurements import label
-from moviepy.editor import VideoFileClip
-
-from train_classifier import (FeatureExtractParams, TRAIN_SAMPLE_SIZE, combine_features, get_hog_features_for_channel,
-                              convert_color_space, get_binned_spatial_features, get_color_histogram_features)
-
-
-def get_img_size(img):
-    """
-    Get image size
-    :param img: image pixels array
-    :return: a tuple of width (X) and height (Y)
-    """
-    return img.shape[1], img.shape[0]
-
-
-def output_img(img, path):
-    """
-    Write image as an output file.
-    :param img: image pixels array, in RGB color space or gray scale
-    :param path: output file path
-    """
-    # Recursively creating the directories leading to this path
-    dirs = [path]
-    for _ in range(2):
-        dirs.append(os.path.dirname(dirs[-1]))
-    for d in dirs[:0:-1]:
-        if d and not os.path.exists(d):
-            os.mkdir(d)
-    # If color image, convert to BGR to write (cv2.imwrite takes BGR image).
-    # Otherwise it is gray scale.
-    if len(img.shape) == 3:
-        img = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_RGB2BGR)
-    cv2.imwrite(path, img)
-
-
-def undistort(img, mtx, dist):
-    """
-    Correct camera distortion
-    :param img: image pixels array, in RGB color space
-    """
-    return cv2.undistort(img, mtx, dist, None, mtx)
+from utils import get_img_size, output_img
 
 
 def mask_lane_pixels(img, sobelx_thresh, color_thresh):
@@ -99,25 +53,18 @@ def transform_perspective(img, src_pts, dst_pts, img_size):
     return warped, M, Minv
 
 
-def preprocess_image(img, mtx, dist, output_dir, img_fname):
+def preprocess_image(img, output_dir, img_fname):
     """
     Pre-processing pipeline for an image.
     :param img: image pixels array, in RGB color space
-    :param mtx: for camera calibration
-    :param dist: for camera calibration
     :param output_dir: output directory
     :param img_fname: output filename for this image, None for disabling output
     :return: undistorted image, masked image in color, warped image, Minv (for warping back)
     """
     img_size = get_img_size(img)  # (width, height)
 
-    # Un-distort image
-    undist = undistort(img, mtx, dist)
-    if img_fname is not None:
-        output_img(undist, os.path.join(output_dir, 'undistort', img_fname))
-
     # Mask lane pixels
-    masked, masked_color = mask_lane_pixels(undist, sobelx_thresh=(20, 100), color_thresh=(170, 255))
+    masked, masked_color = mask_lane_pixels(img, sobelx_thresh=(20, 100), color_thresh=(170, 255))
     if img_fname is not None:
         output_img(masked_color, os.path.join(output_dir, 'masked_color', img_fname))
         output_img(masked, os.path.join(output_dir, 'masked', img_fname))
@@ -141,39 +88,7 @@ def preprocess_image(img, mtx, dist, output_dir, img_fname):
     if img_fname is not None:
         output_img(warped, os.path.join(output_dir, 'masked-warped', img_fname))
 
-    return undist, masked_color, warped, Minv
-
-
-def insert_image(canvas, insert, x, y, shrinkage=None):
-    """
-    Overlay a small image on a background image as an insert.
-    :param canvas: background image
-    :param insert: inserted image
-    :param x: X position
-    :param y: Y position
-    :param shrinkage: optional shrinkage factor
-    """
-    insert_size = get_img_size(insert)
-    if shrinkage is not None:
-        insert = cv2.resize(insert, (int(insert_size[0] / shrinkage),
-                                     int(insert_size[1] / shrinkage)))
-        insert_size = get_img_size(insert)
-    x = int(x)
-    y = int(y)
-    if len(insert.shape) < 3:
-        insert = cv2.cvtColor(insert.astype(np.uint8), cv2.COLOR_GRAY2RGB)
-    canvas[y:y + insert_size[1], x:x + insert_size[0]] = insert
-
-
-def fname_generator(max_num_frame=None):
-    """Generator for output filename for each frame"""
-    idx = 0
-    while True:
-        idx += 1
-        if max_num_frame and idx > max_num_frame:
-            yield None  # Stop producing per-frame image output.
-        else:
-            yield 'video-frame-{}.jpg'.format(idx)
+    return masked_color, warped, Minv
 
 
 class LaneHistoryInfo:
@@ -421,272 +336,27 @@ def detect_lane(warped, lane_hist, num_windows, margin_detect, margin_track, rec
             dist_center if lane_hist is None else lane_hist.distance_to_center)
 
 
-def process_pipeline_prev(img, lane_hist, mtx, dist, output_dir, img_base_fname):
+def lane_finding_pipeline(img, lane_hist, output_dir, img_base_fname):
     """
     Image processing pipeline.
     :param img: image pixels array, in RGB color space
     :param lane_hist: lane history information for look-ahead filter, reset, and smoothing
-    :param mtx: for camera calibration
-    :param dist: for camera calibration
     :param output_dir: intermediate output directory
     :param img_base_fname: base filename for this image, None for disabling intermediate output
-    :return: annotated output image
+    :return: see below
     """
     img_size = get_img_size(img)
 
-    # Preprocess image
-    undist, masked_color, warped, Minv = preprocess_image(img, mtx, dist, output_dir, img_base_fname)
+    # Preprocess image.
+    masked_color, warped, Minv = preprocess_image(img, output_dir, img_base_fname)
 
-    # Detect lane
+    # Detect lane.
     window, region, pixels, radius, distance = detect_lane(
         warped, lane_hist, num_windows=16, margin_detect=75, margin_track=75, recenter_threshold=(10, 100),
         line_distance_threshold=(30, 500), output_dir=output_dir, img_fname=img_base_fname)
 
-    # Overlay intermediate outputs on the original image.
-    insert_image(undist, masked_color, x=img_size[0] * .65, y=img_size[1] * .03, shrinkage=3)
-    insert_image(undist, window, x=img_size[0] * .65, y=img_size[1] * .40, shrinkage=3)
+    # Warp back.
+    lane_region = cv2.warpPerspective(region, Minv, img_size)
+    lane_pixels = cv2.warpPerspective(pixels, Minv, img_size)
 
-    # Highlight the lanes on the original image. First warp it back.
-    warpback = cv2.warpPerspective(region, Minv, img_size)
-    result = cv2.addWeighted(undist, 1, warpback, 0.3, 0)
-    warpback = cv2.warpPerspective(pixels, Minv, img_size)
-    result = cv2.addWeighted(result, .8, warpback, 1, 0)
-
-    # Add text for curvature and distance to lane center
-    cv2.putText(result, "Radius of Curvature: {:.1f}(m)".format(radius), org=(80, 50),
-                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=3, color=(255, 255, 255))
-    cv2.putText(result, "Distance to Center: {:.3f}(m) {}".format(
-        abs(distance), 'left' if distance < 0 else 'right'), org=(80, 100),
-                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=3, color=(255, 255, 255))
-
-    return result
-
-##################################################################
-
-
-class SearchOptions(namedtuple("SearchOptions",
-                               ["window_scale", "y_start", "y_stop", "min_confidence", "cell_per_step"])):
-    """Search window options"""
-
-
-def draw_windows(img, window_list):
-    """Draw the boxes on image"""
-    imcopy = np.copy(img)
-    # Use different color for different window size
-    color_size_boundary = [80, 100]
-    colors = [(0, 0, 255), (255, 0, 0), (0, 255, 0)]
-    assert len(colors) == len(color_size_boundary) + 1
-    for box, confidence in window_list:
-        # Determine which color to use given the window size
-        size = abs(box[0][0] - box[1][0])
-        color_idx = 0
-        for b in color_size_boundary:
-            if size < b:
-                break
-            color_idx += 1
-        # Draw a rectangle given window coordinates
-        cv2.rectangle(imcopy, box[0], box[1], colors[color_idx], 3)
-        # Put down the confidence score
-        cv2.putText(imcopy, "{:.2f}".format(confidence), org=(box[0][0], box[1][1] + 13),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.7, thickness=2, color=(255, 255, 255))
-    return imcopy
-
-
-def precompute_for_all_searches(img, search_opts, params):
-    """
-    Pre-compute HOG features once this image frame
-    :param img: input image
-    :param search_opts: all the search options (for min/max Y boundary)
-    :param params: feature extraction parameters
-    :return: image converted (color space), hog features
-    """
-    # Get the min and max of Y boundary.
-    y_min = np.min([opt.y_start for opt in search_opts])
-    y_max = np.max([opt.y_stop for opt in search_opts])
-    # Slice the image.
-    img_slice = img[y_min:y_max, :, :]
-    # Convert color space.
-    img_slice = convert_color_space(img_slice, params)
-    return img_slice, y_min
-
-
-def search_scaled_window(precomputed, search_opt, clf, scaler, params):
-    """
-    Search given the search window, using sub-sampling for HOG features.
-    :param precomputed: precomputed stuff (see precompute_hog_on_slice)
-    :param search_opt: search window options
-    :param clf: pre-trained classifier
-    :param scaler: feature scaler
-    :param params: feature extraction parameters
-    :return: list of windows in which vehicle is detected
-    """
-    # Extract image slice for this search region.
-    img_slice, y_min = precomputed
-    img_slice = img_slice[search_opt.y_start - y_min:search_opt.y_stop - y_min, :, :]
-    slice_size = get_img_size(img_slice)
-
-    # Scale the sliced region
-    if search_opt.window_scale != 1:
-        img_slice = cv2.resize(img_slice, (int(slice_size[0] / search_opt.window_scale),
-                                           int(slice_size[1] / search_opt.window_scale)))
-        slice_size = get_img_size(img_slice)
-
-    def get_nblocks(size):
-        return (size // params.hog_pix_per_cell) - params.hog_cell_per_block + 1
-
-    # Get the number of blocks and steps
-    nblocks_x = get_nblocks(slice_size[0])
-    nblocks_y = get_nblocks(slice_size[1])
-    nblocks_window = get_nblocks(TRAIN_SAMPLE_SIZE)
-    nsteps_x = (nblocks_x - nblocks_window) // search_opt.cell_per_step + 1
-    nsteps_y = (nblocks_y - nblocks_window) // search_opt.cell_per_step + 1
-
-    # Compute individual channel HOG features.
-    # Don't seem to be able to pre-compute this (possibly due to different window size at different scale).
-    hog_slice = [get_hog_features_for_channel(img_slice, ch, params)
-                 for ch in params.hog_channels]
-
-    positive_windows = []
-    for xb in range(nsteps_x):
-        for yb in range(nsteps_y):
-            ypos = yb * search_opt.cell_per_step
-            xpos = xb * search_opt.cell_per_step
-
-            # Extract HOG features
-            hog_subsampled = [hc[ypos:ypos + nblocks_window, xpos:xpos + nblocks_window].ravel()
-                              for hc in hog_slice]
-
-            # Extract original image patch and get other features
-            xleft = xpos * params.hog_pix_per_cell
-            ytop = ypos * params.hog_pix_per_cell
-            subimg = img_slice[ytop:ytop + TRAIN_SAMPLE_SIZE, xleft:xleft + TRAIN_SAMPLE_SIZE]
-
-            # Combine all the features and scale them
-            all_features = combine_features(spatial_features=get_binned_spatial_features(subimg, params),
-                                            histogram_features=get_color_histogram_features(subimg, params),
-                                            hog_features=np.hstack(hog_subsampled))
-            test_features = scaler.transform(all_features.reshape(1, -1))
-
-            # Make prediction
-            if clf.predict(test_features) == 1:
-                confidence = clf.decision_function(test_features)[0]
-                if confidence < search_opt.min_confidence:
-                    continue
-                xleft_orig = int(xleft * search_opt.window_scale)
-                ytop_orig = int(ytop * search_opt.window_scale)
-                winsize_orig = int(TRAIN_SAMPLE_SIZE * search_opt.window_scale)
-                window = ((xleft_orig, ytop_orig + search_opt.y_start),
-                          (xleft_orig + winsize_orig, ytop_orig + winsize_orig + search_opt.y_start))
-                positive_windows.append((window, confidence))
-
-    return positive_windows
-
-
-def process_pipeline(img, svc, feature_scaler, feature_params, output_dir, img_base_fname):
-    """
-    Image processing pipeline.
-    :param img: image pixels array, in RGB color space
-    :param output_dir: intermediate output directory
-    :param img_base_fname: base filename for this image, None for disabling intermediate output
-    :return: annotated output image
-    """
-
-    # Search through a list of options.
-    search_opt = [
-        # SearchOptions(window_scale=0.5, y_start=400, y_stop=500, min_confidence=0.1, cell_per_step=2),
-        SearchOptions(window_scale=1.0, y_start=400, y_stop=600, min_confidence=0.1, cell_per_step=2),
-        SearchOptions(window_scale=1.5, y_start=400, y_stop=656, min_confidence=0.1, cell_per_step=2),
-        SearchOptions(window_scale=2.0, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2),
-        # SearchOptions(window_scale=3.5, y_start=400, y_stop=680, min_confidence=0.1, cell_per_step=2),
-    ]
-    # Precompute once, instead of in each search
-    precomputed = precompute_for_all_searches(img, search_opt, feature_params)
-
-    positive_windows = list(chain.from_iterable(  # Essentially a flatmap operation
-        map(lambda opt: search_scaled_window(precomputed, opt, svc, feature_scaler, feature_params),
-            search_opt)))
-    searchbox = draw_windows(img, positive_windows)
-    if img_base_fname is not None:
-        output_img(searchbox, os.path.join(output_dir, "searchbox", img_base_fname))
-
-    # Use heat map to weed out false positives and remove duplicate detections.
-    # Build the heat map using confidence score for each search window.
-    heatmap = np.zeros(img.shape[:2]).astype(np.float)
-    for box, confidence in positive_windows:
-        heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] += confidence
-    # For each search window, check if it contains any accumulatively high-confidence pixel (above threshold).
-    # If not, remove this window. Otherwise, keep it as is.
-    heat_threshold_accumulative = 1.5
-    for box, _ in positive_windows:
-        if not np.any(heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] >= heat_threshold_accumulative):
-            heatmap[box[0][1]:box[1][1], box[0][0]:box[1][0]] = 0
-    # Filter individual pixels based on a smaller threshold.
-    heat_threshold_individual = 0.2
-    heatmap[heatmap < heat_threshold_individual] = 0
-    # Increase the heatmap magnitude for visualization.
-    heatmap_display = np.clip(heatmap * 20, 0, 255)
-    if img_base_fname is not None:
-        output_img(heatmap_display, os.path.join(output_dir, "heatmap", img_base_fname))
-
-    # Label individual vehicles
-    labels = label(heatmap)
-    result = np.copy(img)
-    for car_number in range(labels[1]):
-        # Find pixels with each car_number label value
-        nonzero = (labels[0] == car_number + 1).nonzero()
-        nonzeroy = np.array(nonzero[0])
-        nonzerox = np.array(nonzero[1])
-        # Define a bounding box based on min/max x and y
-        bbox = ((np.min(nonzerox), np.min(nonzeroy)),
-                (np.max(nonzerox), np.max(nonzeroy)))
-        # Draw the box on the image
-        cv2.rectangle(result, bbox[0], bbox[1], (0, 0, 255), 6)
-
-    # Overlay diagnosis windows
-    insert_image(result, searchbox, x=40, y=30, shrinkage=3)
-    insert_image(result, heatmap_display, x=500, y=30, shrinkage=3)
-
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model-file', type=str, required=False, default='./trained-model-params.p',
-                        help='File path for the trained model and its parameters')
-    parser.add_argument('--calibration-file', type=str, required=False, default='./calibration-params.p',
-                        help='File path for camera calibration parameters')
-    parser.add_argument('--image-dir', type=str, required=False, #default='./test_images',
-                        help='Directory of images to process')
-    parser.add_argument('--video-file', type=str, required=False, default='./test_video.mp4',
-                        help="Video file to process")
-    args = parser.parse_args()
-
-    # Load camera calibration parameters.
-    dist_pickle = pickle.load(open(args.calibration_file, "rb"))
-    mtx = dist_pickle["mtx"]
-    dist = dist_pickle["dist"]
-
-    # Load model and its parameters.
-    dist_pickle = pickle.load(open(args.model_file, "rb"))
-    svc = dist_pickle["classifier"]
-    scaler = dist_pickle["feature_scaler"]
-    feature_params = dist_pickle["feature_params"]
-    print(feature_params)
-
-    if args.image_dir:
-        images = glob.glob(os.path.join(args.image_dir, "*.jpg"))
-        # images = ['./test_images/test1.jpg']
-        for fname in sorted(images):
-            print(fname)
-            img = cv2.imread(fname)  # BGR
-            out = process_pipeline(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), svc, scaler, feature_params,
-                                   'output_images', os.path.basename(fname))
-            output_img(out, os.path.join('output_images', os.path.basename(fname)))
-
-    if args.video_file:
-        gen = fname_generator(max_num_frame=10)
-        clip = VideoFileClip(args.video_file) #.subclip(0,2)
-        write_clip = clip.fl_image(lambda frame:  # RGB
-            process_pipeline(frame, svc, scaler, feature_params,
-                             'output_images_' + os.path.basename(args.video_file), next(gen)))
-        write_clip.write_videofile('result_' + os.path.basename(args.video_file), audio=False)
+    return window, lane_region, lane_pixels, radius, distance
