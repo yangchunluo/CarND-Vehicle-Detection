@@ -87,9 +87,9 @@ if __name__ == "__main__":
                         help='File path for the trained model and its parameters')
     parser.add_argument('--calibration-file', type=str, required=False, default='../calibration-params.p',
                         help='File path for camera calibration parameters')
-    parser.add_argument('--image-dir', type=str, required=False, # default='../test_images',
+    parser.add_argument('--image-dir', type=str, required=False, #default='../test_images',
                         help='Directory of images to process')
-    parser.add_argument('--video-file', type=str, required=False, default='../test_video.mp4',
+    parser.add_argument('--video-file', type=str, required=False, #default='../test_video.mp4',
                         help="Video file to process")
     args = parser.parse_args()
 

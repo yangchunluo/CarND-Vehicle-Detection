@@ -8,7 +8,7 @@ from scipy.ndimage.measurements import label
 
 from train_classifier import (TRAIN_SAMPLE_SIZE, combine_features, get_hog_features_for_channel,
                               convert_color_space, get_binned_spatial_features, get_color_histogram_features)
-from utils import output_img, get_img_size
+from utils import output_img, get_img_size, draw_outline
 
 
 # Heatmap thresholds for window (current frame) and individual pixel (aggregated over past).
@@ -176,9 +176,12 @@ def vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist, outp
                                              vehicle_detection_params.feature_scaler,
                                              vehicle_detection_params.feature_params),
             search_opt)))
+
+    # Visualize the positive windows
     searchbox_display = draw_windows(img, positive_windows)
     if img_base_fname is not None:
         output_img(searchbox_display, os.path.join(output_dir, "searchbox", img_base_fname))
+    draw_outline(searchbox_display, 10, (192, 192, 192))
 
     # Build the current heat map using confidence score for each search window.
     heatmap = np.zeros(img.shape[:2]).astype(np.float)
@@ -212,15 +215,19 @@ def vehicle_detection_pipeline(img, vehicle_detection_params, vehicle_hist, outp
                                  np.zeros_like(heatmap)))           # B
     cv2.putText(heatmap_display, "Threshold intensity:", org=(70, 110),
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, thickness=3, color=(255, 255, 255))
-    heatmap_display[40:140, 700:800, 0] = HEATMAP_THRESHOLD_PIXEL * boost
+    cv2.circle(heatmap_display, center=(750, 90), radius=50, thickness=-1,
+               color=(HEATMAP_THRESHOLD_PIXEL * boost, 0, 0))
     if img_base_fname is not None:
         output_img(heatmap_display, os.path.join(output_dir, "heatmap", img_base_fname))
+    draw_outline(heatmap_display, 10, (192, 192, 192))
 
     # Filter individual pixels.
     heatmap[heatmap < HEATMAP_THRESHOLD_PIXEL] = 0
 
     # Label individual vehicles
     labels = label(heatmap)
+    cv2.putText(heatmap_display, "Vehicle(s) detected: {}".format(labels[1]), org=(70, 200),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, thickness=3, color=(255, 255, 255))
     vehicles = []
     for obj_number in range(labels[1]):
         # Find pixels with each car_number label value

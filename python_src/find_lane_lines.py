@@ -3,7 +3,7 @@ import cv2
 import copy
 import numpy as np
 
-from utils import get_img_size, output_img
+from utils import get_img_size, output_img, draw_outline
 
 
 def mask_lane_pixels(img, sobelx_thresh, color_thresh):
@@ -354,6 +354,7 @@ def lane_finding_pipeline(img, lane_hist, output_dir, img_base_fname):
     window, region, pixels, radius, distance = detect_lane(
         warped, lane_hist, num_windows=16, margin_detect=75, margin_track=75, recenter_threshold=(10, 100),
         line_distance_threshold=(30, 500), output_dir=output_dir, img_fname=img_base_fname)
+    draw_outline(window, 10, (192, 192, 192))
 
     # Warp back.
     lane_region = cv2.warpPerspective(region, Minv, img_size)

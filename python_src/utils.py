@@ -51,3 +51,16 @@ def insert_image(canvas, insert, x, y, shrinkage=None):
     if len(insert.shape) < 3:
         insert = cv2.cvtColor(insert.astype(np.uint8), cv2.COLOR_GRAY2RGB)
     canvas[y:y + insert_size[1], x:x + insert_size[0]] = insert
+
+
+def draw_outline(image, width, color):
+    """
+    Draw outline around the image boundary
+    :param image: image in RGB
+    :param width: outline width in pixels
+    :param color: outline color
+    """
+    image[:width, :] = color
+    image[-width:, :] = color
+    image[:, :width] = color
+    image[:, -width:] = color
